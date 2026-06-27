@@ -21,6 +21,7 @@ from PySide6.QtGui import QColor, QFont
 from core import csv_loader
 from widgets.autocomplete_delegate import AutocompleteDelegate
 from widgets.import_dialog import ImportDialog
+from widgets.export_dialog import ExportDialog
 
 COL_MATCH = "Coincidencia"
 COL_ID    = "ID Referencia"
@@ -315,15 +316,36 @@ class WorkTab(QWidget):
         model = self._files.get(self._current_path)
         if not model:
             return
+
+        # Asistente de exportación
+        dlg = ExportDialog(model.get_headers(), model.rowCount(), parent=self)
+        if dlg.exec() != ExportDialog.Accepted:
+            return
+
+        selected_cols = dlg.selected_columns
+        delim         = dlg.delimiter
+
         default = Path(self._current_path).stem + "_export.csv"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exportar CSV", default, "CSV (*.csv);;Todos (*.*)"
+            self, "Guardar exportación", default,
+            "CSV (*.csv);;Todos (*.*)"
         )
         if not path:
             return
+
+        # Filtrar columnas seleccionadas
+        all_headers = model.get_headers()
+        col_indices = [all_headers.index(c) for c in selected_cols if c in all_headers]
+        out_headers = [all_headers[i] for i in col_indices]
+        out_rows    = [[row[i] for i in col_indices] for row in model.get_rows()]
+
         try:
-            csv_loader.save_csv(path, model.get_headers(), model.get_rows())
-            QMessageBox.information(self, "Exportado", f"Guardado en:\n{path}")
+            csv_loader.save_csv(path, out_headers, out_rows, delimiter=delim)
+            QMessageBox.information(
+                self, "Exportado",
+                f"Guardado en:\n{path}\n\n"
+                f"{len(out_rows)} filas · {len(out_headers)} columnas"
+            )
         except Exception as e:
             QMessageBox.critical(self, "Error al exportar", str(e))
 

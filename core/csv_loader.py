@@ -134,9 +134,9 @@ def _load_txt(filepath, encoding, max_rows):
 # ── Guardado ──────────────────────────────────────────────────────────────────
 
 def save_csv(filepath: str, headers: list[str], rows: list[list[str]],
-             chunk_size: int = 5000):
+             delimiter: str = ",", chunk_size: int = 5000):
     with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=delimiter)
         writer.writerow(headers)
         for i in range(0, len(rows), chunk_size):
             writer.writerows(rows[i: i + chunk_size])
