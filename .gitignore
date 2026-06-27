@@ -1,8 +1,10 @@
+test/
+*.zip
+
 # ── Build & distribución (PyInstaller) ──────────────────────────────
 backup_project_*.py
 build/
 dist/
-*.zip
 *.spec
 # Puedes quitar la siguiente línea si querés versionar el .spec
 # keepass_autotype_gui.spec
