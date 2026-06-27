@@ -159,10 +159,16 @@ class WorkTab(QWidget):
 
     def _load_path(self, path: str):
         try:
-            headers, rows = csv_loader.load_file(path)
+            headers, rows, truncated = csv_loader.load_file(path)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo cargar:\n{e}")
             return
+        if truncated:
+            QMessageBox.warning(
+                self, "Archivo muy grande",
+                f"El archivo supera {csv_loader.MAX_ROWS:,} filas.\n"
+                f"Se cargaron solo las primeras {csv_loader.MAX_ROWS:,} filas."
+            )
         model = EditableCsvModel(headers, rows, self._get_theme)
         self._files[path] = model
         name = Path(path).name
@@ -212,8 +218,9 @@ class WorkTab(QWidget):
         model = self._files[path]
         self.table.setModel(model)
 
-        delegate = AutocompleteDelegate(self._get_ref, self._get_theme, self.table)
-        delegate._table = self.table   # referencia explícita para avanzar filas
+        delegate = AutocompleteDelegate(
+            self._get_ref, self._get_theme, table=self.table
+        )
         self._delegates[path] = delegate
         self.table.setItemDelegateForColumn(model.match_col_index(), delegate)
         self.table.horizontalHeader().setSectionResizeMode(

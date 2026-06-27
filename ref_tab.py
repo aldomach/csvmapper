@@ -113,10 +113,14 @@ class RefTab(QWidget):
 
     def _load_path(self, path: str):
         try:
-            headers, rows = csv_loader.load_file(path)
+            headers, rows, truncated = csv_loader.load_file(path)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo cargar:\n{e}")
             return
+        if truncated:
+            from PySide6.QtWidgets import QMessageBox as _MB
+            _MB.warning(self, "Archivo grande",
+                f"Se cargaron solo las primeras {csv_loader.MAX_ROWS:,} filas.")
         self._files[path] = (headers, rows)
         name = Path(path).name
         if self.file_combo.findData(path) == -1:
