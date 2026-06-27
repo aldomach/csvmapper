@@ -129,16 +129,17 @@ class RefTab(QWidget):
         search_inner.addWidget(self._search_scroll)
 
         btn_row_s = QHBoxLayout()
-        btn_all_s = QPushButton("Todos")
-        btn_all_s.setObjectName("btn_small")
-        btn_all_s.setFixedHeight(24)
-        btn_none_s = QPushButton("Ninguno")
-        btn_none_s.setObjectName("btn_small")
-        btn_none_s.setFixedHeight(24)
-        btn_all_s.clicked.connect(lambda: self._toggle_all(self._search_checks, True))
-        btn_none_s.clicked.connect(lambda: self._toggle_all(self._search_checks, False))
-        btn_row_s.addWidget(btn_all_s)
-        btn_row_s.addWidget(btn_none_s)
+        btn_row_s.setSpacing(4)
+        for label, fn in [
+            ("Todos",    lambda: self._toggle_all(self._search_checks, True)),
+            ("Ninguno",  lambda: self._toggle_all(self._search_checks, False)),
+            ("Invertir", lambda: self._invert_all(self._search_checks)),
+        ]:
+            b = QPushButton(label)
+            b.setObjectName("btn_small")
+            b.setFixedHeight(24)
+            b.clicked.connect(fn)
+            btn_row_s.addWidget(b)
         btn_row_s.addStretch()
         search_inner.addLayout(btn_row_s)
         panels.addWidget(self._search_group)
@@ -163,16 +164,17 @@ class RefTab(QWidget):
         copy_inner.addWidget(self._copy_scroll)
 
         btn_row_c = QHBoxLayout()
-        btn_all_c = QPushButton("Todos")
-        btn_all_c.setObjectName("btn_small")
-        btn_all_c.setFixedHeight(24)
-        btn_none_c = QPushButton("Ninguno")
-        btn_none_c.setObjectName("btn_small")
-        btn_none_c.setFixedHeight(24)
-        btn_all_c.clicked.connect(lambda: self._toggle_all(self._copy_checks, True))
-        btn_none_c.clicked.connect(lambda: self._toggle_all(self._copy_checks, False))
-        btn_row_c.addWidget(btn_all_c)
-        btn_row_c.addWidget(btn_none_c)
+        btn_row_c.setSpacing(4)
+        for label, fn in [
+            ("Todos",    lambda: self._toggle_all(self._copy_checks, True)),
+            ("Ninguno",  lambda: self._toggle_all(self._copy_checks, False)),
+            ("Invertir", lambda: self._invert_all(self._copy_checks)),
+        ]:
+            b = QPushButton(label)
+            b.setObjectName("btn_small")
+            b.setFixedHeight(24)
+            b.clicked.connect(fn)
+            btn_row_c.addWidget(b)
         btn_row_c.addStretch()
         copy_inner.addLayout(btn_row_c)
         panels.addWidget(self._copy_group)
@@ -233,7 +235,14 @@ class RefTab(QWidget):
 
     def _toggle_all(self, checks: list[QCheckBox], state: bool):
         for chk in checks:
-            chk.setChecked(state)
+            if chk.isEnabled():
+                chk.setChecked(state)
+        self.ref_changed.emit()
+
+    def _invert_all(self, checks: list[QCheckBox]):
+        for chk in checks:
+            if chk.isEnabled():
+                chk.setChecked(not chk.isChecked())
         self.ref_changed.emit()
 
     def _on_only_id_changed(self, _):

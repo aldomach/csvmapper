@@ -86,10 +86,13 @@ class MainWindow(QMainWindow):
         self._apply_theme()
 
     def _on_ref_changed(self):
-        records, id_col, disp_col = self.ref_tab.build_lookup()
+        result = self.ref_tab.build_lookup()
+        records, id_col = result[0], result[1]
+        search_cols = result[2] if len(result) > 2 else []
         n = len(records)
+        search_info = f" · Buscar en: {', '.join(search_cols)}" if search_cols else ""
         self._ref_status.setText(
-            f"Referencia: {n} registros · ID={id_col} · Texto={disp_col}"
+            f"Referencia: {n} registros · ID={id_col}{search_info}"
             if n else "Referencia: sin datos"
         )
 
