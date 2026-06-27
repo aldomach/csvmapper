@@ -1,61 +1,80 @@
 """
 autocomplete_delegate.py
-Delegate con popup de autocompletado que NO usa Qt.Popup (evita robar foco).
-Busqueda multi-termino: "anca aña" matchea registros que contengan TODAS las palabras.
+Fixes aplicados:
+  1. Enter avanza a la fila siguiente, misma columna, abre editor.
+  2. Popup redimensionable (QSizeGrip) y posicionado bajo la celda editada.
+  3. Flechas ↑↓ navegan toda la lista sin trabarse.
+  4. Clic carga el valor correctamente.
 """
 from PySide6.QtWidgets import (
     QStyledItemDelegate, QLineEdit, QListWidget, QListWidgetItem,
-    QFrame, QVBoxLayout
+    QFrame, QVBoxLayout, QSizeGrip, QHBoxLayout, QAbstractItemView
 )
-from PySide6.QtCore import Qt, QPoint, QTimer, QEvent
-from PySide6.QtGui import QKeyEvent, QColor
+from PySide6.QtCore import Qt, QPoint, QTimer, QEvent, QSize
+from PySide6.QtGui import QKeyEvent
 
+
+# ── Popup redimensionable ──────────────────────────────────────────────────────
 
 class AutocompletePopup(QFrame):
-    """
-    Popup sin Qt.Popup flag para evitar que cierre el editor al recibir foco.
-    Se posiciona manualmente como hijo de la ventana principal.
-    """
     def __init__(self, window):
-        # Hijo directo de la ventana → no roba foco del editor
         super().__init__(window, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(1, 1, 1, 1)
-        lay.setSpacing(0)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(1, 1, 1, 4)
+        root.setSpacing(0)
+
         self.list = QListWidget()
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setMouseTracking(True)
-        lay.addWidget(self.list)
-        self.setFixedHeight(240)
-        self.setMinimumWidth(380)
+        # Flechas navegan la lista normalmente (no interceptadas aquí)
+        self.list.setFocusPolicy(Qt.StrongFocus)
+        root.addWidget(self.list)
+
+        # Grip en esquina inferior derecha para redimensionar
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 2, 0)
+        grip_row.addStretch()
+        grip = QSizeGrip(self)
+        grip_row.addWidget(grip)
+        root.addLayout(grip_row)
+
+        self.resize(420, 260)
+        self.setMinimumSize(250, 120)
 
     def show_below(self, editor: QLineEdit):
+        """Posiciona el popup justo debajo de la celda editada."""
         gp = editor.mapToGlobal(QPoint(0, editor.height() + 2))
-        # Convertir a coordenadas del parent (la ventana)
         lp = self.parent().mapFromGlobal(gp)
+
+        # Ajustar ancho mínimo al ancho del editor
+        w = max(self.width(), editor.width())
+        self.resize(w, self.height())
         self.move(lp)
-        w = max(380, editor.width())
-        self.setFixedWidth(w)
         self.raise_()
         self.show()
 
+
+# ── Delegate ───────────────────────────────────────────────────────────────────
 
 class AutocompleteDelegate(QStyledItemDelegate):
     def __init__(self, ref_tab_getter, theme_getter=None, parent=None):
         super().__init__(parent)
         self._get_ref = ref_tab_getter
-        self._get_theme = theme_getter  # callable → "light"|"dark"
+        self._get_theme = theme_getter
         self._popup: AutocompletePopup | None = None
         self._editor: QLineEdit | None = None
+        self._table = parent          # QTableView
         self._current_index = None
         self._model = None
         self._selected_display = None
         self._selected_id = None
         self._ignore_text_change = False
 
-    # ── Editor lifecycle ───────────────────────────────────────────────────────
+    # ── Ciclo de vida del editor ───────────────────────────────────────────────
 
     def createEditor(self, parent, option, index):
         editor = QLineEdit(parent)
@@ -66,14 +85,13 @@ class AutocompleteDelegate(QStyledItemDelegate):
         self._selected_display = None
         self._selected_id = None
 
-        # Crear popup como hijo de la ventana principal
         window = parent.window()
         popup = AutocompletePopup(window)
         self._popup = popup
         self._apply_popup_theme()
 
-        popup.list.itemClicked.connect(self._on_item_selected)
-        popup.list.itemActivated.connect(self._on_item_selected)
+        # CLIC: usar pressed en lugar de clicked para capturar antes del foco
+        popup.list.itemPressed.connect(self._on_item_selected)
 
         editor.textChanged.connect(self._on_text_changed)
         editor.installEventFilter(self)
@@ -84,10 +102,10 @@ class AutocompleteDelegate(QStyledItemDelegate):
         val = index.data(Qt.EditRole) or ""
         self._ignore_text_change = True
         editor.setText(val)
+        editor.selectAll()
         self._ignore_text_change = False
 
     def setModelData(self, editor, model, index):
-        # Si el usuario seleccionó un item, usar ese valor
         if self._selected_display is not None:
             model.setData(index, self._selected_display, Qt.EditRole)
         else:
@@ -110,28 +128,25 @@ class AutocompleteDelegate(QStyledItemDelegate):
         if dark:
             self._popup.setStyleSheet("""
                 QFrame { background:#2d2d2d; border:1px solid #555; border-radius:4px; }
-                QListWidget { background:#2d2d2d; color:#e8e8e8; border:none; font-size:13px; }
+                QListWidget { background:#2d2d2d; color:#e8e8e8; border:none; font-size:13px; outline:0; }
                 QListWidget::item { padding:6px 10px; color:#e8e8e8; }
                 QListWidget::item:hover { background:#3a5278; color:#ffffff; }
                 QListWidget::item:selected { background:#1565c0; color:#ffffff; }
+                QSizeGrip { background: transparent; }
             """)
         else:
             self._popup.setStyleSheet("""
                 QFrame { background:#ffffff; border:1px solid #90caf9; border-radius:4px; }
-                QListWidget { background:#ffffff; color:#1a1a2e; border:none; font-size:13px; }
+                QListWidget { background:#ffffff; color:#1a1a2e; border:none; font-size:13px; outline:0; }
                 QListWidget::item { padding:6px 10px; color:#1a1a2e; }
                 QListWidget::item:hover { background:#e3f2fd; color:#0d47a1; }
                 QListWidget::item:selected { background:#1565c0; color:#ffffff; }
+                QSizeGrip { background: transparent; }
             """)
 
     # ── Búsqueda multi-término ────────────────────────────────────────────────
 
     def _multi_match(self, query: str, record: dict) -> bool:
-        """
-        Splitea el query en palabras y verifica que CADA palabra
-        aparezca en algún campo del registro (búsqueda AND multi-término).
-        "anca aña" → busca "anca" Y "aña" en cualquier campo del registro.
-        """
         terms = [t.lower() for t in query.split() if t]
         if not terms:
             return False
@@ -141,7 +156,6 @@ class AutocompleteDelegate(QStyledItemDelegate):
     def _on_text_changed(self, text: str):
         if self._ignore_text_change:
             return
-        # Si el usuario modifica el texto después de seleccionar, resetear selección
         self._selected_display = None
         self._selected_id = None
 
@@ -160,7 +174,6 @@ class AutocompleteDelegate(QStyledItemDelegate):
             if self._multi_match(query, rec):
                 display = rec.get(disp_col, "")
                 id_val  = rec.get(id_col, "")
-                # Construir label con todos los campos visibles
                 all_vals = " | ".join(str(v) for v in rec.values())
                 matches.append((display, id_val, all_vals))
 
@@ -176,27 +189,52 @@ class AutocompleteDelegate(QStyledItemDelegate):
         else:
             self._popup.hide()
 
+    # ── Selección de item ─────────────────────────────────────────────────────
+
     def _on_item_selected(self, item: QListWidgetItem):
-        display, id_val = item.data(Qt.UserRole)
+        if item is None:
+            return
+        data = item.data(Qt.UserRole)
+        if data is None:
+            return
+        display, id_val = data
         self._selected_display = display
         self._selected_id = id_val
 
-        # Escribir en el editor sin re-disparar búsqueda
         if self._editor:
             self._ignore_text_change = True
             self._editor.setText(display)
             self._ignore_text_change = False
 
-        # Escribir ID en la última columna inmediatamente
         self._write_id(id_val)
 
         if self._popup:
             self._popup.hide()
 
-        # Devolver foco al editor y confirmar
         if self._editor:
             self._editor.setFocus()
-            QTimer.singleShot(50, self._commit_and_close)
+
+        # Guardar índice actual antes de que se destruya el editor
+        current_index = self._current_index
+        QTimer.singleShot(30, lambda: self._commit_and_advance(current_index))
+
+    def _commit_and_advance(self, index):
+        """Confirma el editor y salta a la siguiente fila, misma columna."""
+        if self._editor:
+            self.commitData.emit(self._editor)
+            self.closeEditor.emit(self._editor, QStyledItemDelegate.NoHint)
+
+        # Avanzar a la siguiente fila
+        if index is not None and self._table is not None:
+            next_row = index.row() + 1
+            col = index.column()
+            model = self._table.model()
+            if model and next_row < model.rowCount():
+                next_index = model.index(next_row, col)
+                self._table.setCurrentIndex(next_index)
+                self._table.scrollTo(next_index)
+                # Abrir editor en la nueva celda
+                QTimer.singleShot(30, lambda: self._table.edit(next_index))
 
     def _commit_and_close(self):
         if self._editor:
@@ -213,46 +251,67 @@ class AutocompleteDelegate(QStyledItemDelegate):
     # ── Event filter ──────────────────────────────────────────────────────────
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress:
-            key = event.key()
+        if event.type() != QEvent.KeyPress:
+            return super().eventFilter(obj, event)
 
-            # Navegación desde el editor hacia el popup
-            if obj is self._editor:
-                if key == Qt.Key_Down and self._popup and self._popup.isVisible():
-                    self._popup.list.setFocus()
-                    if self._popup.list.currentRow() < 0:
-                        self._popup.list.setCurrentRow(0)
-                    return True
-                if key == Qt.Key_Escape and self._popup:
+        key = event.key()
+
+        # ── Teclas en el editor ───────────────────────────────────────────────
+        if obj is self._editor:
+            popup_visible = self._popup and self._popup.isVisible()
+
+            if key == Qt.Key_Down and popup_visible:
+                # Pasar foco al popup, seleccionar primer item
+                lst = self._popup.list
+                lst.setFocus()
+                if lst.currentRow() < 0 and lst.count() > 0:
+                    lst.setCurrentRow(0)
+                return True
+
+            if key == Qt.Key_Escape:
+                if popup_visible:
                     self._popup.hide()
                     return True
-                if key in (Qt.Key_Return, Qt.Key_Enter):
-                    if self._popup and self._popup.isVisible():
-                        cur = self._popup.list.currentItem()
-                        if cur is None and self._popup.list.count() > 0:
-                            self._popup.list.setCurrentRow(0)
-                            cur = self._popup.list.currentItem()
-                        if cur:
-                            self._on_item_selected(cur)
-                            return True
 
-            # Navegación dentro del popup con teclado
-            if obj is self._popup.list if self._popup else False:
-                if key in (Qt.Key_Return, Qt.Key_Enter):
-                    cur = self._popup.list.currentItem()
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                if popup_visible:
+                    lst = self._popup.list
+                    cur = lst.currentItem()
+                    if cur is None and lst.count() > 0:
+                        lst.setCurrentRow(0)
+                        cur = lst.currentItem()
                     if cur:
                         self._on_item_selected(cur)
                         return True
-                if key == Qt.Key_Escape:
-                    self._popup.hide()
-                    if self._editor:
-                        self._editor.setFocus()
-                    return True
-                # Letras → redirigir al editor
-                if key not in (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown):
-                    if self._editor:
-                        self._editor.setFocus()
-                        self._editor.event(event)
-                    return True
+                # Sin popup: Enter avanza igual
+                current_index = self._current_index
+                QTimer.singleShot(30, lambda: self._commit_and_advance(current_index))
+                return True
+
+        # ── Teclas en la lista del popup ──────────────────────────────────────
+        if self._popup and obj is self._popup.list:
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                cur = self._popup.list.currentItem()
+                if cur:
+                    self._on_item_selected(cur)
+                return True
+
+            if key == Qt.Key_Escape:
+                self._popup.hide()
+                if self._editor:
+                    self._editor.setFocus()
+                return True
+
+            # ↑ y ↓ los deja pasar para que QListWidget los maneje normalmente
+            if key in (Qt.Key_Up, Qt.Key_Down,
+                       Qt.Key_PageUp, Qt.Key_PageDown,
+                       Qt.Key_Home, Qt.Key_End):
+                return False   # NO interceptar → navegación nativa de la lista
+
+            # Cualquier letra → redirigir al editor para seguir escribiendo
+            if self._editor and event.text():
+                self._editor.setFocus()
+                self._editor.event(event)
+                return True
 
         return super().eventFilter(obj, event)

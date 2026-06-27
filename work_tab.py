@@ -213,6 +213,7 @@ class WorkTab(QWidget):
         self.table.setModel(model)
 
         delegate = AutocompleteDelegate(self._get_ref, self._get_theme, self.table)
+        delegate._table = self.table   # referencia explícita para avanzar filas
         self._delegates[path] = delegate
         self.table.setItemDelegateForColumn(model.match_col_index(), delegate)
         self.table.horizontalHeader().setSectionResizeMode(
