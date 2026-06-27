@@ -1,12 +1,11 @@
 """
-work_tab.py - Work tab: open CSVs, display as editable tables,
-with autocomplete column and auto-filled ID column.
+work_tab.py - Pestaña de Trabajo con tabla editable y autocompletado.
 """
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableView, QComboBox, QFileDialog, QMessageBox, QSizePolicy,
-    QFrame, QHeaderView, QAbstractItemView, QInputDialog, QLineEdit
+    QFrame, QHeaderView, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PySide6.QtGui import QColor, QFont
@@ -14,20 +13,19 @@ from PySide6.QtGui import QColor, QFont
 import csv_loader
 from autocomplete_delegate import AutocompleteDelegate
 
-# Column name constants
 COL_MATCH = "Coincidencia"
 COL_ID    = "ID Referencia"
 
 
-# ── Editable table model ───────────────────────────────────────────────────────
-
 class EditableCsvModel(QAbstractTableModel):
-    def __init__(self, headers: list[str], rows: list[list[str]], parent=None):
+    def __init__(self, headers, rows, theme_getter=None, parent=None):
         super().__init__(parent)
         self._headers = list(headers) + [COL_MATCH, COL_ID]
         self._rows = [list(r) + ["", ""] for r in rows]
+        self._get_theme = theme_getter
+        self._match_col = len(self._headers) - 2
+        self._id_col    = len(self._headers) - 1
 
-    # Required overrides
     def rowCount(self, _=QModelIndex()): return len(self._rows)
     def columnCount(self, _=QModelIndex()): return len(self._headers)
 
@@ -35,18 +33,28 @@ class EditableCsvModel(QAbstractTableModel):
         if not index.isValid():
             return None
         col = index.column()
+        dark = self._get_theme and self._get_theme() == "dark"
+
         if role in (Qt.DisplayRole, Qt.EditRole):
             return self._rows[index.row()][col]
+
         if role == Qt.BackgroundRole:
-            if col == len(self._headers) - 2:      # COL_MATCH
-                return QColor("#fffde7")
-            if col == len(self._headers) - 1:      # COL_ID
-                return QColor("#e8f5e9")
+            if col == self._match_col:
+                return QColor("#3d3000") if dark else QColor("#fffde7")
+            if col == self._id_col:
+                return QColor("#003d0f") if dark else QColor("#e8f5e9")
             if index.row() % 2:
-                return QColor("#f5f7fa")
-        if role == Qt.FontRole:
-            if col >= len(self._headers) - 2:
-                f = QFont(); f.setBold(True); return f
+                return QColor("#2a2a42") if dark else QColor("#f5f7fa")
+
+        if role == Qt.ForegroundRole:
+            if col == self._match_col:
+                return QColor("#ffe082") if dark else QColor("#5d4037")
+            if col == self._id_col:
+                return QColor("#a5d6a7") if dark else QColor("#1b5e20")
+
+        if role == Qt.FontRole and col >= self._match_col:
+            f = QFont(); f.setBold(True); return f
+
         return None
 
     def setData(self, index, value, role=Qt.EditRole):
@@ -57,52 +65,47 @@ class EditableCsvModel(QAbstractTableModel):
         return False
 
     def flags(self, index):
-        base = super().flags(index)
-        return base | Qt.ItemIsEditable
+        return super().flags(index) | Qt.ItemIsEditable
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
             return self._headers[section]
         return None
 
-    # ── Accessors ──────────────────────────────────────────────────────────────
-
     def get_headers(self): return list(self._headers)
     def get_rows(self):    return [list(r) for r in self._rows]
+    def match_col_index(self): return self._match_col
+    def id_col_index(self):    return self._id_col
 
-    def match_col_index(self): return len(self._headers) - 2
-    def id_col_index(self):    return len(self._headers) - 1
-
-
-# ── Work Tab ───────────────────────────────────────────────────────────────────
 
 class WorkTab(QWidget):
-    def __init__(self, config_manager, ref_tab_getter, parent=None):
+    def __init__(self, config_manager, ref_tab_getter, theme_getter=None, parent=None):
         super().__init__(parent)
         self.cfg = config_manager
-        self._get_ref = ref_tab_getter   # callable → (records, id_col, disp_col)
-        self._files: dict[str, EditableCsvModel] = {}
-        self._current_path: str | None = None
+        self._get_ref = ref_tab_getter
+        self._get_theme = theme_getter
+        self._files: dict = {}
+        self._delegates: dict = {}   # path → delegate (para actualizar tema)
+        self._current_path = None
         self._build_ui()
-
-    # ── UI ─────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        # Toolbar row 1
         bar = QHBoxLayout()
-        btn_open   = QPushButton("＋  Abrir CSV")
+        btn_open = QPushButton("＋  Abrir CSV")
         btn_open.setFixedHeight(32)
         btn_open.clicked.connect(self._open_file)
 
         btn_close = QPushButton("✕  Cerrar")
+        btn_close.setObjectName("btn_close")
         btn_close.setFixedHeight(32)
         btn_close.clicked.connect(self._close_current)
 
         btn_export = QPushButton("💾  Exportar CSV")
+        btn_export.setObjectName("btn_export")
         btn_export.setFixedHeight(32)
         btn_export.clicked.connect(self._export_current)
 
@@ -117,21 +120,19 @@ class WorkTab(QWidget):
         bar.addWidget(btn_export)
         root.addLayout(bar)
 
-        # Legend
+        # Leyenda
         legend = QHBoxLayout()
-        for color, text in [("#fffde7", f"  {COL_MATCH} (buscar)  "),
-                             ("#e8f5e9", f"  {COL_ID} (auto)  ")]:
-            lbl = QLabel(text)
-            lbl.setStyleSheet(f"background:{color}; border:1px solid #ccc; border-radius:3px; padding:2px 6px;")
+        self.lbl_match = QLabel(f"  🟡 {COL_MATCH}: escribí para buscar en la referencia  ")
+        self.lbl_id    = QLabel(f"  🟢 {COL_ID}: se rellena automático  ")
+        for lbl in (self.lbl_match, self.lbl_id):
+            lbl.setStyleSheet("border:1px solid #aaa; border-radius:3px; padding:2px 6px;")
             legend.addWidget(lbl)
         legend.addStretch()
         root.addLayout(legend)
 
-        # Separator
         line = QFrame(); line.setFrameShape(QFrame.HLine); line.setFrameShadow(QFrame.Sunken)
         root.addWidget(line)
 
-        # Table
         self.table = QTableView()
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -144,11 +145,8 @@ class WorkTab(QWidget):
         )
         root.addWidget(self.table)
 
-        # Status
         self.status_lbl = QLabel("Sin archivos cargados.")
         root.addWidget(self.status_lbl)
-
-    # ── File operations ────────────────────────────────────────────────────────
 
     def _open_file(self):
         last = self.cfg.load_last_dir()
@@ -165,10 +163,8 @@ class WorkTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"No se pudo cargar:\n{e}")
             return
-
-        model = EditableCsvModel(headers, rows)
+        model = EditableCsvModel(headers, rows, self._get_theme)
         self._files[path] = model
-
         name = Path(path).name
         if self.file_combo.findData(path) == -1:
             self.file_combo.addItem(name, userData=path)
@@ -181,6 +177,7 @@ class WorkTab(QWidget):
             return
         path = self.file_combo.currentData()
         self._files.pop(path, None)
+        self._delegates.pop(path, None)
         self.file_combo.removeItem(idx)
         if not self._files:
             self.table.setModel(None)
@@ -195,14 +192,13 @@ class WorkTab(QWidget):
             return
         default = str(Path(self._current_path).stem) + "_export.csv"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exportar CSV", default,
-            "CSV (*.csv);;Todos (*.*)"
+            self, "Exportar CSV", default, "CSV (*.csv);;Todos (*.*)"
         )
         if not path:
             return
         try:
             csv_loader.save_csv(path, model.get_headers(), model.get_rows())
-            QMessageBox.information(self, "Exportado", f"Archivo guardado en:\n{path}")
+            QMessageBox.information(self, "Exportado", f"Guardado en:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Error al exportar", str(e))
 
@@ -216,27 +212,26 @@ class WorkTab(QWidget):
         model = self._files[path]
         self.table.setModel(model)
 
-        # Install autocomplete delegate only on the match column
-        delegate = AutocompleteDelegate(self._get_ref, self.table)
-        match_col = model.match_col_index()
-        self.table.setItemDelegateForColumn(match_col, delegate)
-
-        # ID column: read-only visual indicator (still editable if needed)
+        delegate = AutocompleteDelegate(self._get_ref, self._get_theme, self.table)
+        self._delegates[path] = delegate
+        self.table.setItemDelegateForColumn(model.match_col_index(), delegate)
         self.table.horizontalHeader().setSectionResizeMode(
             model.id_col_index(), QHeaderView.ResizeToContents
         )
-        n_rows = model.rowCount()
-        n_cols = model.columnCount()
+        n = model.rowCount()
+        c = model.columnCount()
         self.status_lbl.setText(
-            f"{n_rows} filas · {n_cols} columnas  —  {Path(path).name}  "
-            f"| Columna '{COL_MATCH}' para buscar, '{COL_ID}' se rellena automático"
+            f"{n} filas · {c} columnas  —  {Path(path).name}"
+            f"  |  Doble clic en '{COL_MATCH}' para buscar"
         )
 
-    # ── Public API ─────────────────────────────────────────────────────────────
+    def refresh_theme(self):
+        if self.table.model():
+            self.table.viewport().update()
 
-    def get_open_paths(self) -> list[str]:
+    def get_open_paths(self) -> list:
         return list(self._files.keys())
 
-    def restore_files(self, paths: list[str]):
+    def restore_files(self, paths: list):
         for p in paths:
             self._load_path(p)

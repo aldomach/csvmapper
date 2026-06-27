@@ -1,61 +1,17 @@
 """
-ui_main.py - MainWindow: tab container, session save/restore, theming.
+ui_main.py - MainWindow: pestañas, selector de tema claro/oscuro, sesión.
 """
 from PySide6.QtWidgets import (
-    QMainWindow, QTabWidget, QWidget, QStatusBar, QToolBar,
-    QApplication, QLabel
+    QMainWindow, QTabWidget, QStatusBar, QLabel, QPushButton,
+    QHBoxLayout, QWidget
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon, QFont, QAction
+from PySide6.QtGui import QFont
 
 from config_manager import ConfigManager
 from ref_tab import RefTab
 from work_tab import WorkTab
-
-
-STYLE = """
-QMainWindow { background: #f0f2f5; }
-QTabWidget::pane { border: 1px solid #d0d3d8; background: #ffffff; border-radius: 4px; }
-QTabBar::tab {
-    padding: 8px 22px; font-size: 13px; background: #e4e7ec;
-    border: 1px solid #c9cdd4; border-bottom: none;
-    border-top-left-radius: 4px; border-top-right-radius: 4px;
-    color: #555;
-}
-QTabBar::tab:selected { background: #ffffff; color: #1a1a2e; font-weight: bold; }
-QTabBar::tab:hover { background: #f0f2f5; }
-
-QPushButton {
-    background: #3f51b5; color: white; border: none;
-    border-radius: 4px; padding: 5px 14px; font-size: 12px;
-}
-QPushButton:hover { background: #5c6bc0; }
-QPushButton:pressed { background: #303f9f; }
-QPushButton[text="✕  Cerrar"] { background: #e53935; }
-QPushButton[text="✕  Cerrar"]:hover { background: #ef5350; }
-QPushButton[text="💾  Exportar CSV"] { background: #2e7d32; }
-QPushButton[text="💾  Exportar CSV"]:hover { background: #388e3c; }
-
-QTableView {
-    gridline-color: #e0e3e8;
-    font-size: 12px;
-    selection-background-color: #bbdefb;
-    selection-color: #000;
-}
-QTableView QHeaderView::section {
-    background: #3f51b5; color: white;
-    padding: 5px 8px; border: none;
-    font-size: 12px; font-weight: bold;
-}
-QComboBox {
-    border: 1px solid #bbb; border-radius: 3px; padding: 4px 8px; font-size: 12px;
-}
-QLineEdit {
-    border: 1px solid #90caf9; border-radius: 3px; padding: 4px; font-size: 12px;
-}
-QStatusBar { background: #3f51b5; color: white; font-size: 11px; }
-QLabel { font-size: 12px; }
-"""
+from theme import THEMES
 
 
 class MainWindow(QMainWindow):
@@ -66,10 +22,11 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 500)
 
         self.cfg = ConfigManager()
+        self._theme = self.cfg.load_theme()   # "light" | "dark"
         self._build_ui()
+        self._apply_theme()
         self._restore_session()
 
-        # Auto-save every 30 s
         self._save_timer = QTimer(self)
         self._save_timer.timeout.connect(self._save_session)
         self._save_timer.start(30_000)
@@ -77,18 +34,37 @@ class MainWindow(QMainWindow):
     # ── Build UI ───────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        self.setStyleSheet(STYLE)
-
-        # Reference tab first so Work tab can query it
-        self.ref_tab = RefTab(self.cfg)
+        # Reference tab primero para que Work tab pueda consultarla
+        self.ref_tab = RefTab(self.cfg, self._get_theme)
         self.ref_tab.ref_changed.connect(self._on_ref_changed)
 
-        self.work_tab = WorkTab(self.cfg, self._get_ref)
+        self.work_tab = WorkTab(self.cfg, self._get_ref, self._get_theme)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.work_tab, "📋  Trabajo")
         self.tabs.addTab(self.ref_tab, "📚  Referencia")
-        self.setCentralWidget(self.tabs)
+
+        # Toolbar superior con el botón de tema
+        toolbar_widget = QWidget()
+        toolbar_layout = QHBoxLayout(toolbar_widget)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.btn_theme = QPushButton()
+        self.btn_theme.setObjectName("btn_theme")
+        self.btn_theme.setFixedSize(110, 30)
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        toolbar_layout.addStretch()
+        toolbar_layout.addWidget(self.btn_theme)
+
+        # Contenedor central = toolbar + tabs
+        central = QWidget()
+        from PySide6.QtWidgets import QVBoxLayout
+        vlay = QVBoxLayout(central)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(0)
+        vlay.addWidget(toolbar_widget)
+        vlay.addWidget(self.tabs)
+        self.setCentralWidget(central)
 
         # Status bar
         self.status = QStatusBar()
@@ -96,6 +72,28 @@ class MainWindow(QMainWindow):
         self._ref_status = QLabel("Referencia: sin datos")
         self.status.addPermanentWidget(self._ref_status)
         self.status.showMessage("Listo")
+
+    # ── Tema ───────────────────────────────────────────────────────────────────
+
+    def _get_theme(self) -> str:
+        return self._theme
+
+    def _apply_theme(self):
+        self.setStyleSheet(THEMES[self._theme])
+        label = "🌙  Modo oscuro" if self._theme == "light" else "☀️  Modo claro"
+        self.btn_theme.setText(label)
+        # Notificar a los tabs para que actualicen colores internos
+        if hasattr(self, "work_tab"):
+            self.work_tab.refresh_theme()
+        if hasattr(self, "ref_tab"):
+            self.ref_tab.refresh_theme()
+
+    def _toggle_theme(self):
+        self._theme = "dark" if self._theme == "light" else "light"
+        self.cfg.save_theme(self._theme)
+        self._apply_theme()
+
+    # ── Referencia ─────────────────────────────────────────────────────────────
 
     def _get_ref(self):
         return self.ref_tab.build_lookup()
@@ -108,21 +106,19 @@ class MainWindow(QMainWindow):
         else:
             self._ref_status.setText("Referencia: sin datos")
 
-    # ── Session ────────────────────────────────────────────────────────────────
+    # ── Sesión ─────────────────────────────────────────────────────────────────
 
     def _save_session(self):
         self.cfg.save_session(
             self.work_tab.get_open_paths(),
             self.ref_tab.get_open_paths()
         )
-        geom = self.saveGeometry()
-        self.cfg.save_geometry(geom)
+        self.cfg.save_geometry(self.saveGeometry())
 
     def _restore_session(self):
         geom = self.cfg.load_geometry()
         if geom:
             self.restoreGeometry(geom)
-
         work_files, ref_files = self.cfg.load_session()
         self.ref_tab.restore_files(ref_files)
         self.work_tab.restore_files(work_files)
