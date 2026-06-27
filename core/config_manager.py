@@ -1,6 +1,4 @@
-"""
-config_manager.py - Persistencia de sesión y configuración con QSettings.
-"""
+"""core/config_manager.py — Persistencia de sesión y preferencias."""
 import json
 from pathlib import Path
 from PySide6.QtCore import QSettings
@@ -19,9 +17,8 @@ class ConfigManager:
         try:
             work = json.loads(self.settings.value("session/work_files", "[]"))
             ref  = json.loads(self.settings.value("session/ref_files",  "[]"))
-            work = [f for f in work if Path(f).exists()]
-            ref  = [f for f in ref  if Path(f).exists()]
-            return work, ref
+            return ([f for f in work if Path(f).exists()],
+                    [f for f in ref  if Path(f).exists()])
         except Exception:
             return [], []
 

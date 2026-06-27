@@ -1,10 +1,7 @@
-"""
-CSVMapper - Main entry point
-"""
+"""CSVMapper — punto de entrada."""
 import sys
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
-from ui_main import MainWindow
+from ui.main_window import MainWindow
 
 
 def main():
@@ -12,7 +9,6 @@ def main():
     app.setApplicationName("CSVMapper")
     app.setOrganizationName("CSVMapper")
     app.setStyle("Fusion")
-
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
