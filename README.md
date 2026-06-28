@@ -1,51 +1,120 @@
 # CSVMapper
 
-Aplicación de escritorio (Windows/Linux/Mac) para mapear registros de un CSV de trabajo contra una tabla de referencia, con autocompletado dinámico.
+Aplicación de escritorio (Windows / Linux / Mac) para mapear registros de un CSV de trabajo contra una tabla de referencia, con autocompletado dinámico multi-término.
 
-## Estructura del proyecto
-
-```
-csvmapper/
-├── main.py                  ← Punto de entrada
-├── ui_main.py               ← Ventana principal + pestañas
-├── work_tab.py              ← Pestaña "Trabajo"
-├── ref_tab.py               ← Pestaña "Referencia"
-├── autocomplete_delegate.py ← Lógica de autocompletado
-├── csv_loader.py            ← Lectura/escritura de archivos
-├── config_manager.py        ← Persistencia de sesión (QSettings)
-└── requirements.txt
-```
+---
 
 ## Instalación
 
 ```bash
 pip install -r requirements.txt
-```
-
-## Uso
-
-```bash
 python main.py
 ```
 
-### Flujo típico
+**Requisitos:** Python 3.11+ · PySide6 >= 6.5 · chardet >= 5.0
 
-1. **Pestaña Referencia**  
-   - Abrí tu CSV maestro (ej. lista de clientes, productos, etc.)  
-   - Elegí qué columna es el **ID** y qué columna contiene el **texto a buscar**
+---
 
-2. **Pestaña Trabajo**  
-   - Abrí el CSV que querés enriquecer  
-   - En la columna **Coincidencia** (anteúltima, amarilla), tipea cualquier parte de cualquier palabra de la referencia  
-   - Seleccioná con Enter o clic el registro que querés  
-   - La columna **ID Referencia** (última, verde) se rellena automáticamente
+## Estructura del proyecto
 
-3. **Exportar**: botón "💾 Exportar CSV" → guarda el archivo completo con las columnas nuevas
+```
+csvmapper/
+├── main.py                          ← Punto de entrada
+├── requirements.txt
+├── sample_referencia.csv            ← Datos de ejemplo
+├── sample_trabajo.csv
+│
+├── core/                            ← Lógica pura, sin UI
+│   ├── csv_loader.py                ← Lectura/escritura CSV (auto-encoding, auto-delimitador)
+│   ├── config_manager.py            ← Persistencia de sesión con QSettings
+│   └── theme.py                     ← Paletas claro/oscuro
+│
+├── ui/                              ← Ventanas y pestañas
+│   ├── main_window.py               ← Ventana principal, toggle de tema, sesión
+│   ├── work_tab.py                  ← Pestaña de Trabajo
+│   └── ref_tab.py                   ← Pestaña de Referencia
+│
+└── widgets/                         ← Componentes reutilizables
+    ├── autocomplete_delegate.py     ← Delegate + popup de búsqueda
+    ├── import_dialog.py             ← Asistente de importación CSV
+    └── export_dialog.py             ← Asistente de exportación CSV
+```
 
-### Características
+---
 
-- Soporte CSV, TSV y TXT (detección automática de encoding y delimitador)
-- Múltiples archivos abiertos simultáneamente en cada pestaña
-- La sesión se guarda automáticamente cada 30 segundos y al cerrar
-- Búsqueda fuzzy: encuentra coincidencias en cualquier campo del registro de referencia
-- Navegación con teclado en el popup (↓ para bajar, Enter para seleccionar, Esc para cerrar)
+## Flujo de trabajo
+
+### 1. Pestaña Referencia
+
+- Abrí tu archivo maestro (lista de productos, clientes, etc.)
+- El **asistente de importación** detecta automáticamente el encoding y el separador; podés ajustarlo y ver una preview antes de confirmar
+- Elegí qué columna es el **ID** (se copiará al archivo de trabajo)
+- Tildá los **campos para buscar** — la búsqueda opera solo sobre esos campos
+- Tildá las **columnas a copiar al trabajo** — al seleccionar un registro, esos valores se copian automáticamente a las columnas correspondientes del archivo de trabajo
+- Activá **"Solo copiar el ID"** si no necesitás columnas extra
+
+Cada grupo de checkboxes tiene botones **Todos / Ninguno / Invertir**.
+
+### 2. Pestaña Trabajo
+
+- Abrí el CSV que querés enriquecer (cualquier cantidad de columnas, cualquier separador)
+- La tabla agrega dos columnas al final:
+  - 🟡 **Coincidencia** — donde escribís para buscar
+  - 🟢 **ID Referencia** — se rellena automáticamente al seleccionar
+
+#### Búsqueda con autocompletado
+
+- Doble clic (o F2) en la columna **Coincidencia** para activar el editor
+- Escribí cualquier parte de cualquier palabra — la búsqueda es **multi-término**: `anca aña` encuentra `Azúcar blanca | Azúcar refinada de caña`
+- El popup muestra todos los campos del registro de referencia
+- Navegación: `↓ / ↑` para moverse, `Enter` para seleccionar, `Esc` para cerrar, clic directo también funciona
+- Al confirmar: se rellena **Coincidencia**, **ID Referencia**, y las columnas extra tildadas en Referencia
+- El cursor avanza automáticamente a la siguiente fila, lista para escribir
+
+#### Modo edición
+
+- **Solo mapeo** (por defecto): solo se pueden editar las columnas Coincidencia e ID. Los datos originales no se tocan.
+- **Edición libre**: cualquier celda es editable + botones para agregar filas y columnas.
+
+#### Ordenar
+
+Clic en cualquier encabezado de columna para ordenar ascendente / descendente.
+
+### 3. Exportar
+
+El botón **💾 Exportar** abre el asistente de exportación:
+
+- Seleccioná qué **columnas** incluir (checkboxes con Todos / Ninguno / Invertir)
+- Elegí el **separador de salida**: coma, punto y coma, tab, pipe, o personalizado
+- Opción **entrecomillar cada campo**
+- Opción **exportar solo filas con coincidencia o modificación**
+- El archivo se guarda en UTF-8 con BOM (compatible con Excel)
+
+---
+
+## Características generales
+
+| Feature | Detalle |
+|---|---|
+| Formatos de entrada | CSV, TSV, TXT — detección automática de encoding y delimitador |
+| Separadores soportados | `,` `;` `\t` `\|` y personalizado; con o sin comillas en los campos |
+| Primera fila | Configurable: encabezado o dato |
+| Múltiples archivos | Varios archivos abiertos a la vez en cada pestaña |
+| Sesión persistente | Se guarda automáticamente cada 30 s y al cerrar |
+| Archivos grandes | Límite de 200.000 filas con aviso; exportación por chunks |
+| Tema | Claro / Oscuro, persiste entre sesiones |
+| Teclado | Navegación completa sin mouse |
+
+---
+
+## Archivos de ejemplo
+
+| Archivo | Descripción |
+|---|---|
+| `sample_referencia.csv` | 8 productos con ID, Nombre, Descripción, Categoría |
+| `sample_trabajo.csv` | 5 pedidos sin mapear |
+
+**Prueba rápida:**
+1. Abrí `sample_referencia.csv` en la pestaña Referencia → ID = `ID`, buscar en `Nombre`
+2. Abrí `sample_trabajo.csv` en la pestaña Trabajo
+3. Doble clic en la columna Coincidencia de la primera fila → escribí `azu` → seleccioná con Enter o clic
