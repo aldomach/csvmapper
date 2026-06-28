@@ -1,48 +1,51 @@
 """
 widgets/export_dialog.py — Asistente de exportación.
-Permite elegir columnas a exportar y separador de salida.
+- Selector de columnas (checkboxes)
+- Separador de salida
+- Opción entrecomillar campos
+- Opción exportar solo filas con coincidencia/modificación
 """
-import csv
-from pathlib import Path
-
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QRadioButton, QButtonGroup,
     QLineEdit, QCheckBox, QGroupBox, QDialogButtonBox,
-    QScrollArea, QWidget, QFileDialog,
+    QScrollArea, QWidget, QMessageBox,
 )
 from PySide6.QtCore import Qt
 
 DELIMITER_OPTIONS = [
-    ("Coma  ( , )",            ","),
-    ("Punto y coma  ( ; )",    ";"),
-    ("Tab  ( \\t )",            "\t"),
-    ("Pipe  ( | )",             "|"),
-    ("Otro…",                   None),
+    ("Coma  ( , )",              ","),
+    ("Punto y coma  ( ; )",      ";"),
+    ("Tab  ( \\t )",              "\t"),
+    ("Pipe  ( | )",               "|"),
+    ("Otro…",                     None),
 ]
 
 
 class ExportDialog(QDialog):
-    def __init__(self, headers: list[str], n_rows: int, parent=None):
+    def __init__(self, headers: list[str], n_rows: int,
+                 match_col: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Asistente de exportación")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(480)
+        self.setMinimumWidth(620)
+        self.setMinimumHeight(520)
         self.setModal(True)
 
-        self._headers    = headers
-        self._n_rows     = n_rows
-        self._sel_delim  = ","
-        self._col_checks : list[QCheckBox] = []
-        self._filepath   : str = ""
-
+        self._headers   = headers
+        self._n_rows    = n_rows
+        self._match_col = match_col   # nombre columna Coincidencia para filtro
+        self._sel_delim = ","
+        self._col_checks: list[QCheckBox] = []
         self._build_ui()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setSpacing(10)
 
-        root.addWidget(QLabel(f"<b>{self._n_rows}</b> filas · <b>{len(self._headers)}</b> columnas disponibles"))
+        root.addWidget(QLabel(
+            f"<b>{self._n_rows}</b> filas · "
+            f"<b>{len(self._headers)}</b> columnas disponibles"
+        ))
 
         # ── Columnas ──────────────────────────────────────────────────────────
         col_box = QGroupBox("Columnas a exportar")
@@ -65,7 +68,6 @@ class ExportDialog(QDialog):
         scroll.setWidget(container)
         col_vlay.addWidget(scroll)
 
-        # Botones selección rápida
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
         for label, fn in [
@@ -83,7 +85,7 @@ class ExportDialog(QDialog):
         root.addWidget(col_box)
 
         # ── Separador de salida ───────────────────────────────────────────────
-        sep_box = QGroupBox("Separador de campos en el archivo de salida")
+        sep_box = QGroupBox("Separador de campos")
         sep_grid = QGridLayout(sep_box)
         self._delim_group = QButtonGroup(self)
         self._radios: dict = {}
@@ -94,9 +96,7 @@ class ExportDialog(QDialog):
             self._radios[delim] = rb
             self._delim_group.addButton(rb)
             sep_grid.addWidget(rb, i // 2, i % 2)
-            rb.toggled.connect(
-                lambda checked, d=delim: self._on_radio(checked, d)
-            )
+            rb.toggled.connect(lambda checked, d=delim: self._on_radio(checked, d))
 
         custom_row = QHBoxLayout()
         custom_row.addWidget(QLabel("Personalizado:"))
@@ -110,7 +110,24 @@ class ExportDialog(QDialog):
         sep_grid.addLayout(custom_row, len(DELIMITER_OPTIONS) // 2 + 1, 0, 1, 2)
         root.addWidget(sep_box)
 
-        # ── Botones OK/Cancel ─────────────────────────────────────────────────
+        # ── Opciones extra ────────────────────────────────────────────────────
+        opt_box = QGroupBox("Opciones adicionales")
+        opt_vlay = QVBoxLayout(opt_box)
+
+        self._chk_quote = QCheckBox('Entrecomillar cada campo  (cada valor entre comillas dobles)')
+        self._chk_quote.setChecked(False)
+        opt_vlay.addWidget(self._chk_quote)
+
+        self._chk_only_modified = QCheckBox(
+            'Exportar solo filas con coincidencia o modificación'
+            + (f'  (columna: {self._match_col})' if self._match_col else '')
+        )
+        self._chk_only_modified.setChecked(False)
+        opt_vlay.addWidget(self._chk_only_modified)
+
+        root.addWidget(opt_box)
+
+        # ── Botones ───────────────────────────────────────────────────────────
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.button(QDialogButtonBox.Ok).setText("Elegir destino y exportar…")
         btns.button(QDialogButtonBox.Cancel).setText("Cancelar")
@@ -141,10 +158,9 @@ class ExportDialog(QDialog):
             self._sel_delim = text[0]
 
     def _on_accept(self):
-        selected = self.selected_columns
-        if not selected:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Sin columnas", "Seleccioná al menos una columna.")
+        if not self.selected_columns:
+            QMessageBox.warning(self, "Sin columnas",
+                                "Seleccioná al menos una columna.")
             return
         self.accept()
 
@@ -157,3 +173,11 @@ class ExportDialog(QDialog):
     @property
     def delimiter(self) -> str:
         return self._sel_delim or ","
+
+    @property
+    def quote_fields(self) -> bool:
+        return self._chk_quote.isChecked()
+
+    @property
+    def only_modified(self) -> bool:
+        return self._chk_only_modified.isChecked()

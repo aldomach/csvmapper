@@ -1,8 +1,11 @@
 """
 widgets/autocomplete_delegate.py
 
-Popup: QWidget top-level, sin SizeGrip (causaba problemas de clic),
-clic nativo via mousePressEvent con event.accept().
+Fix definitivo del bug Coincidencia:
+  _on_selected escribe DIRECTAMENTE en el modelo (self._model.setData)
+  en el momento del clic, SIN esperar a setModelData ni commitData.
+  setModelData queda como respaldo para el caso Enter.
+  Así el display siempre se guarda independientemente del ciclo del editor.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QEvent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Lista con clic nativo
+#  Lista con clic nativo — sin propagar eventos de mouse
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _ClickList(QListWidget):
@@ -31,30 +34,26 @@ class _ClickList(QListWidget):
         if item is not None:
             self.setCurrentItem(item)
             self._on_click(item)
-            event.accept()          # no propagar → foco no sale del editor
-        else:
-            super().mousePressEvent(event)
+        event.accept()   # siempre aceptar — nunca propagar al padre
 
     def mouseReleaseEvent(self, event):
-        event.accept()              # bloquear release también
+        event.accept()
 
     def wheelEvent(self, event):
         super().wheelEvent(event)
-        event.accept()              # scroll interno sin propagar
+        event.accept()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Popup — sin QSizeGrip, tamaño fijo razonable
+#  Popup — QWidget top-level, sin parent, sin SizeGrip
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AutocompletePopup(QWidget):
     def __init__(self, on_select):
-        super().__init__(None)      # sin parent = ventana independiente del SO
+        super().__init__(None)
         self._on_select = on_select
         self.setWindowFlags(
-            Qt.Tool                 |
-            Qt.FramelessWindowHint  |
-            Qt.WindowStaysOnTopHint
+            Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WA_DeleteOnClose, False)
@@ -66,11 +65,8 @@ class AutocompletePopup(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(1, 1, 1, 1)
         lay.setSpacing(0)
-
         self.list = _ClickList(self._on_select)
         lay.addWidget(self.list)
-
-    # ── Posición ──────────────────────────────────────────────────────────────
 
     def show_below(self, editor: QLineEdit):
         origin = editor.mapToGlobal(QPoint(0, editor.height() + 3))
@@ -86,19 +82,19 @@ class AutocompletePopup(QWidget):
         self.raise_()
         self.show()
 
-    # ── Navegación ────────────────────────────────────────────────────────────
-
     def select_next(self):
         n = self.list.count()
         if n == 0: return
         self.list.setCurrentRow(min(self.list.currentRow() + 1, n - 1))
-        self.list.scrollToItem(self.list.currentItem())
+        if self.list.currentItem():
+            self.list.scrollToItem(self.list.currentItem())
 
     def select_prev(self):
         n = self.list.count()
         if n == 0: return
         self.list.setCurrentRow(max(self.list.currentRow() - 1, 0))
-        self.list.scrollToItem(self.list.currentItem())
+        if self.list.currentItem():
+            self.list.scrollToItem(self.list.currentItem())
 
     def current_item(self):
         return self.list.currentItem()
@@ -108,39 +104,33 @@ class AutocompletePopup(QWidget):
         if item:
             self._on_select(item)
 
-    # ── Tema ──────────────────────────────────────────────────────────────────
-
     def apply_theme(self, dark: bool):
         if dark:
             self.setStyleSheet("""
                 QWidget     { background:#2b2b2b; border:1px solid #555; border-radius:3px; }
-                QListWidget { background:#2b2b2b; color:#e8e8e8; border:none;
-                              font-size:13px; outline:0; }
-                QListWidget::item          { padding:6px 12px; color:#e8e8e8;
-                                             border-bottom:1px solid #3a3a3a; }
+                QListWidget { background:#2b2b2b; color:#e8e8e8; border:none; font-size:13px; outline:0; }
+                QListWidget::item          { padding:6px 12px; color:#e8e8e8; border-bottom:1px solid #3a3a3a; }
                 QListWidget::item:hover    { background:#3a5278; color:#fff; }
                 QListWidget::item:selected { background:#1565c0; color:#fff; }
-                QScrollBar:vertical        { background:#3a3a3a; width:12px; border-radius:0; }
+                QScrollBar:vertical        { background:#3a3a3a; width:12px; }
                 QScrollBar::handle:vertical{ background:#666; border-radius:4px; min-height:24px; }
                 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
                 QScrollBar:horizontal      { background:#3a3a3a; height:12px; }
-                QScrollBar::handle:horizontal{ background:#666; border-radius:4px; }
+                QScrollBar::handle:horizontal { background:#666; border-radius:4px; }
                 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }
             """)
         else:
             self.setStyleSheet("""
                 QWidget     { background:#fff; border:1px solid #90caf9; border-radius:3px; }
-                QListWidget { background:#fff; color:#1a1a2e; border:none;
-                              font-size:13px; outline:0; }
-                QListWidget::item          { padding:6px 12px; color:#1a1a2e;
-                                             border-bottom:1px solid #eee; }
+                QListWidget { background:#fff; color:#1a1a2e; border:none; font-size:13px; outline:0; }
+                QListWidget::item          { padding:6px 12px; color:#1a1a2e; border-bottom:1px solid #eee; }
                 QListWidget::item:hover    { background:#e3f2fd; color:#0d47a1; }
                 QListWidget::item:selected { background:#1565c0; color:#fff; }
-                QScrollBar:vertical        { background:#f0f0f0; width:12px; border-radius:0; }
+                QScrollBar:vertical        { background:#f0f0f0; width:12px; }
                 QScrollBar::handle:vertical{ background:#bbb; border-radius:4px; min-height:24px; }
                 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
                 QScrollBar:horizontal      { background:#f0f0f0; height:12px; }
-                QScrollBar::handle:horizontal{ background:#bbb; border-radius:4px; }
+                QScrollBar::handle:horizontal { background:#bbb; border-radius:4px; }
                 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }
             """)
 
@@ -156,26 +146,24 @@ class AutocompleteDelegate(QStyledItemDelegate):
         self._get_theme = theme_getter
         self._table     = table
 
-        self._popup       : AutocompletePopup | None = None
-        self._editor      : QLineEdit | None         = None
-        self._cur_idx     = None
-        self._model       = None
-        self._sel_display : str | None = None
-        self._sel_id      : str | None = None
-        self._sel_extra   : dict       = {}
-        self._no_search   : bool       = False
+        self._popup      : AutocompletePopup | None = None
+        self._editor     : QLineEdit | None         = None
+        self._cur_idx    = None
+        self._model      = None       # modelo guardado al crear editor
+        self._no_search  : bool = False
+        # Flag: indica si ya escribimos en el modelo directamente (clic)
+        # para que setModelData no sobreescriba con texto vacío
+        self._committed  : bool = False
 
     # ── Ciclo de vida ──────────────────────────────────────────────────────────
 
     def createEditor(self, parent, option, index):
         editor = QLineEdit(parent)
         editor.setPlaceholderText("Escribí para buscar…")
-        self._editor      = editor
-        self._cur_idx     = index
-        self._model       = index.model()
-        self._sel_display = None
-        self._sel_id      = None
-        self._sel_extra   = {}
+        self._editor    = editor
+        self._cur_idx   = index
+        self._model     = index.model()   # guardar referencia al modelo aquí
+        self._committed = False
 
         dark = bool(self._get_theme and self._get_theme() == "dark")
         popup = AutocompletePopup(on_select=self._on_selected)
@@ -194,8 +182,11 @@ class AutocompleteDelegate(QStyledItemDelegate):
         self._no_search = False
 
     def setModelData(self, editor, model, index):
-        val = self._sel_display if self._sel_display is not None else editor.text()
-        model.setData(index, val, Qt.EditRole)
+        # Si ya escribimos directamente en el modelo (vía clic), no hacer nada
+        if self._committed:
+            return
+        # Caso Enter: guardar el texto actual del editor
+        model.setData(index, editor.text(), Qt.EditRole)
 
     def destroyEditor(self, editor, index):
         if self._popup:
@@ -219,21 +210,20 @@ class AutocompleteDelegate(QStyledItemDelegate):
     def _search(self, text: str):
         if self._no_search:
             return
-        self._sel_display = None
-        self._sel_id      = None
-        self._sel_extra   = {}
+        self._committed = False
 
         query = text.strip()
         popup = self._popup
         if not query or popup is None:
-            if popup: popup.hide()
+            if popup:
+                popup.hide()
             return
 
         result = self._get_ref()
         if len(result) == 4:
             records, id_col, search_cols, copy_cols = result
         else:
-            records, id_col, disp_col = result
+            records, id_col = result[0], result[1]
             search_cols, copy_cols = [], []
 
         if not records:
@@ -244,11 +234,11 @@ class AutocompleteDelegate(QStyledItemDelegate):
             if self._multi_match(query, rec, search_cols):
                 id_val  = str(rec.get(id_col, ""))
                 display = "  ".join(
-                    str(rec.get(c, "")) for c in (search_cols or rec.keys())
+                    str(rec.get(c, "")) for c in (search_cols or list(rec.keys()))
                     if rec.get(c, "")
                 )
-                label   = "  |  ".join(str(v) for v in rec.values())
-                extra   = {c: str(rec.get(c, "")) for c in copy_cols}
+                label = "  |  ".join(str(v) for v in rec.values())
+                extra = {c: str(rec.get(c, "")) for c in copy_cols}
                 matches.append((display, id_val, label, extra))
 
         popup.list.clear()
@@ -275,34 +265,41 @@ class AutocompleteDelegate(QStyledItemDelegate):
             return
         display, id_val, extra = data
 
-        self._sel_display = display
-        self._sel_id      = id_val
-        self._sel_extra   = extra
+        # ── ESCRITURA DIRECTA EN EL MODELO ──────────────────────────────────
+        # Hacemos esto AQUÍ, antes de cualquier timer o ciclo de editor,
+        # porque el editor puede destruirse en cualquier momento tras el clic.
+        if self._model is not None and self._cur_idx is not None:
+            row      = self._cur_idx.row()
+            match_col = self._cur_idx.column()
+            last_col  = self._model.columnCount() - 1
 
+            # 1. Columna Coincidencia (la celda que se está editando)
+            self._model.setData(
+                self._model.index(row, match_col), display, Qt.EditRole
+            )
+            # 2. Columna ID Referencia (última columna)
+            self._model.setData(
+                self._model.index(row, last_col), id_val, Qt.EditRole
+            )
+            # 3. Columnas extra (copy_cols)
+            self._write_extra(extra)
+
+        self._committed = True  # decirle a setModelData que no sobreescriba
+
+        # Actualizar el editor visualmente (puede que ya esté destruido, sin problema)
         if self._editor:
             self._no_search = True
             self._editor.setText(display)
             self._no_search = False
 
-        self._write_id(id_val)
-        self._write_extra(extra)
-
         if self._popup:
             self._popup.hide()
 
+        # Cerrar editor y avanzar
         saved = self._cur_idx
         if self._editor:
             self._editor.setFocus()
         QTimer.singleShot(20, lambda: self._commit_and_advance(saved))
-
-    def _write_id(self, id_val: str):
-        if self._cur_idx is None or self._model is None:
-            return
-        last = self._model.columnCount() - 1
-        self._model.setData(
-            self._model.index(self._cur_idx.row(), last),
-            id_val, Qt.EditRole
-        )
 
     def _write_extra(self, extra: dict):
         if not extra or self._model is None or self._cur_idx is None:

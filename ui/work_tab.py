@@ -13,15 +13,12 @@ from PySide6.QtWidgets import (
     QTableView, QComboBox, QFileDialog, QMessageBox, QSizePolicy,
     QFrame, QHeaderView, QAbstractItemView, QCheckBox,
 )
-from PySide6.QtCore import (
-    Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel,
-)
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PySide6.QtGui import QColor, QFont
 
 from core import csv_loader
 from widgets.autocomplete_delegate import AutocompleteDelegate
 from widgets.import_dialog import ImportDialog
-from widgets.export_dialog import ExportDialog
 
 COL_MATCH = "Coincidencia"
 COL_ID    = "ID Referencia"
@@ -211,16 +208,12 @@ class WorkTab(QWidget):
         opts.addStretch()
 
         # Leyenda
-        for color_l, color_d, text in [
-            ("#fffde7", "#3d3000", f" 🟡 {COL_MATCH} "),
-            ("#e8f5e9", "#003d0f", f" 🟢 {COL_ID} "),
-        ]:
+        self._legend_labels = []
+        for text in [f" 🟡 {COL_MATCH} ", f" 🟢 {COL_ID} "]:
             lbl = QLabel(text)
-            lbl.setStyleSheet(
-                f"background:{'#3d3000' if False else color_l};"
-                "border:1px solid #aaa; border-radius:3px; padding:1px 4px;"
-            )
+            lbl.setStyleSheet("border:1px solid #aaa; border-radius:3px; padding:1px 4px;")
             opts.addWidget(lbl)
+            self._legend_labels.append(lbl)
 
         root.addLayout(opts)
 
@@ -318,12 +311,18 @@ class WorkTab(QWidget):
             return
 
         # Asistente de exportación
-        dlg = ExportDialog(model.get_headers(), model.rowCount(), parent=self)
-        if dlg.exec() != ExportDialog.Accepted:
+        from widgets.export_dialog import ExportDialog as _ExportDialog
+        dlg = _ExportDialog(
+            model.get_headers(), model.rowCount(),
+            match_col=COL_MATCH, parent=self
+        )
+        if dlg.exec() != _ExportDialog.Accepted:
             return
 
-        selected_cols = dlg.selected_columns
-        delim         = dlg.delimiter
+        selected_cols  = dlg.selected_columns
+        delim          = dlg.delimiter
+        quote_fields   = dlg.quote_fields
+        only_modified  = dlg.only_modified
 
         default = Path(self._current_path).stem + "_export.csv"
         path, _ = QFileDialog.getSaveFileName(
@@ -333,14 +332,28 @@ class WorkTab(QWidget):
         if not path:
             return
 
-        # Filtrar columnas seleccionadas
+        # Filtrar columnas
         all_headers = model.get_headers()
         col_indices = [all_headers.index(c) for c in selected_cols if c in all_headers]
         out_headers = [all_headers[i] for i in col_indices]
-        out_rows    = [[row[i] for i in col_indices] for row in model.get_rows()]
+        all_rows    = model.get_rows()
+
+        # Filtrar filas modificadas si corresponde
+        if only_modified:
+            match_idx = all_headers.index(COL_MATCH) if COL_MATCH in all_headers else -1
+            if match_idx >= 0:
+                all_rows = [r for r in all_rows if r[match_idx].strip()]
+            else:
+                # sin columna Coincidencia: filtrar cualquier fila con algún valor
+                all_rows = [r for r in all_rows if any(v.strip() for v in r)]
+
+        out_rows = [[row[i] for i in col_indices] for row in all_rows]
 
         try:
-            csv_loader.save_csv(path, out_headers, out_rows, delimiter=delim)
+            csv_loader.save_csv(
+                path, out_headers, out_rows,
+                delimiter=delim, quote_all=quote_fields
+            )
             QMessageBox.information(
                 self, "Exportado",
                 f"Guardado en:\n{path}\n\n"

@@ -134,9 +134,11 @@ def _load_txt(filepath, encoding, max_rows):
 # ── Guardado ──────────────────────────────────────────────────────────────────
 
 def save_csv(filepath: str, headers: list[str], rows: list[list[str]],
-             delimiter: str = ",", chunk_size: int = 5000):
+             delimiter: str = ",", quote_all: bool = False,
+             chunk_size: int = 5000):
+    quoting = csv.QUOTE_ALL if quote_all else csv.QUOTE_MINIMAL
     with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f, delimiter=delimiter)
+        writer = csv.writer(f, delimiter=delimiter, quoting=quoting)
         writer.writerow(headers)
         for i in range(0, len(rows), chunk_size):
             writer.writerows(rows[i: i + chunk_size])
